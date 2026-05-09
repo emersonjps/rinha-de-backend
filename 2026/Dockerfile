@@ -1,6 +1,6 @@
 FROM golang:1.22-alpine AS builder-dataset
 WORKDIR /app
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/converter/ ./cmd/converter/
 COPY resources/ ./resources/
@@ -8,7 +8,7 @@ RUN go run ./cmd/converter/main.go -out /app/references.bin
 
 FROM golang:1.22-alpine AS builder-api
 WORKDIR /app
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o rinha-api ./cmd/api

@@ -162,7 +162,7 @@ func Vectorize(body []byte, mccRisks map[string]float32) ([14]float32, error) {
 	unknownMerchant := float32(1)
 	knownMerchants, kmType, _, err := jsonparser.Get(customer, "known_merchants")
 	if err == nil && kmType == jsonparser.Array {
-		_ = jsonparser.ArrayEach(knownMerchants, func(value []byte, dataType jsonparser.ValueType, offset int, err error) {
+		_, _ = jsonparser.ArrayEach(knownMerchants, func(value []byte, dataType jsonparser.ValueType, offset int, err error) {
 			if unknownMerchant == 0 || dataType != jsonparser.String {
 				return
 			}
