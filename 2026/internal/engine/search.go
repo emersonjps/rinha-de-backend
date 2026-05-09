@@ -2,6 +2,8 @@ package engine
 
 import (
 	"math"
+	"sync"
+	"unsafe"
 )
 
 type Neighbor struct {
@@ -15,6 +17,13 @@ type ClusterDist struct {
 }
 
 const NPROBE = 16
+
+var distPool = sync.Pool{
+	New: func() any {
+		s := make([]float32, 50000)
+		return &s
+	},
+}
 
 // SearchNeighbors uses IVF index to perform an approximate KNN (k=5) search.
 func SearchNeighbors(target [14]float32, dataEngine *DataEngine) float32 {
@@ -62,34 +71,29 @@ func SearchNeighbors(target [14]float32, dataEngine *DataEngine) float32 {
 }
 
 func searchChunkInline(target [14]float32, records []VectorRecord, heap *[5]Neighbor) {
+	if len(records) == 0 {
+		return
+	}
+
+	sptr := distPool.Get().(*[]float32)
+	dists := *sptr
+	if len(dists) < len(records) {
+		dists = make([]float32, len(records)*2)
+		*sptr = dists
+	}
+
+	// Calculate all distances in batch using AVX2 Assembly!
+	batchDistAVX2(&target, unsafe.Pointer(&records[0]), len(records), &dists[0])
+
 	for i := 0; i < len(records); i++ {
-		rec := &records[i]
-
-		d0 := rec.Dimensions[0] - target[0]
-		d1 := rec.Dimensions[1] - target[1]
-		d2 := rec.Dimensions[2] - target[2]
-		d3 := rec.Dimensions[3] - target[3]
-		d4 := rec.Dimensions[4] - target[4]
-		d5 := rec.Dimensions[5] - target[5]
-		d6 := rec.Dimensions[6] - target[6]
-		d7 := rec.Dimensions[7] - target[7]
-		d8 := rec.Dimensions[8] - target[8]
-		d9 := rec.Dimensions[9] - target[9]
-		d10 := rec.Dimensions[10] - target[10]
-		d11 := rec.Dimensions[11] - target[11]
-		d12 := rec.Dimensions[12] - target[12]
-		d13 := rec.Dimensions[13] - target[13]
-
-		distSq := d0*d0 + d1*d1 + d2*d2 + d3*d3 +
-			d4*d4 + d5*d5 + d6*d6 + d7*d7 +
-			d8*d8 + d9*d9 + d10*d10 + d11*d11 +
-			d12*d12 + d13*d13
-
-		if distSq < heap[4].DistSq {
-			heap[4] = Neighbor{DistSq: distSq, IsFraud: rec.IsFraud}
+		d := dists[i]
+		if d < heap[4].DistSq {
+			heap[4] = Neighbor{DistSq: d, IsFraud: records[i].IsFraud}
 			bubbleUp(heap)
 		}
 	}
+
+	distPool.Put(sptr)
 }
 
 func initHeap() [5]Neighbor {
