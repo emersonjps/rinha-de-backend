@@ -69,13 +69,20 @@ go run benchmark.go -n 100 -c 4
 go run benchmark.go -n 1000 -c 20
 ```
 
-### Entendendo os Resultados
+### Entendendo os Resultados e a Avaliação da Rinha
 
-O script retornará os seguintes dados vitais para a Rinha:
-- **Throughput (req/s):** Capacidade de vazão. O `SearchNeighbors` atual faz *brute-force* em 3 milhões de registros, por isso é normal esse número girar abaixo de 10 req/s.
-- **Distribuição de Latência (P50, P90, P99):** O score final de latência da Rinha usa fortemente o **P99**.
+A pontuação final da Rinha vai de **-6000 a +6000 pontos** e é a soma independente de dois fatores principais. O seu script de benchmark ajuda a medir a latência, que é metade do seu score:
 
-Se o percentil **P99** da latência estiver acima de `2000 ms`, sua pontuação de performance afundará para `-3000`. Otimizações na lógica de busca e no motor de KNN são essenciais para subir o ranking!
+1. **Score de Latência (`score_p99`):** 
+   - A avaliação recompensa o seu **P99** logaritmicamente (cada 10x mais rápido = +1000 pontos). 
+   - Se o seu P99 for **≤ 1ms**, você atinge o teto máximo de **+3000 pontos**.
+   - Se o seu P99 passar de **2000ms**, você sofre o corte e recebe **-3000 pontos**.
+
+2. **Score de Detecção (`score_det`):** 
+   - Penaliza as previsões incorretas com diferentes pesos: Erros HTTP pesam muito (5), Falsos Negativos pesam médio (3) e Falsos Positivos pesam pouco (1).
+   - Se a sua taxa bruta de falhas (FP + FN + HTTP Errors) passar de **15%**, seu score de detecção é cortado direto para **-3000 pontos**.
+
+**Como melhorar sua pontuação:** O `SearchNeighbors` atual faz *brute-force* nos 3 milhões de vetores, resultando em alto consumo de CPU e P99 elevado. Para garantir os +3000 de latência sem perder a acurácia, você deverá substituir a força bruta por algoritmos de Busca Aproximada (ANN), como **HNSW**, **IVF**, ou buscas exatas como **VP Tree**. Além disso, prefira retornar uma resposta "chutada" rápida ao invés de devolver erro 500 caso ocorra falha interna!
 
 ## 4. Encerrando o ambiente
 

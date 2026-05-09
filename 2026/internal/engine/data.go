@@ -1,13 +1,18 @@
 package engine
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
+	"math"
 	"os"
 	"syscall"
 	"unsafe"
 )
 
-const RecordSize = 60 // 14*4 + 1 + 3 bytes padding
+const RecordSize = 60 // 14*4 + 1 + 3 padding
+const HeaderSize = 8  // Magic (4) + NumClusters (4)
+const ClusterInfoSize = 64 // 14*4 + Start (4) + Count (4)
 
 type VectorRecord struct {
 	Dimensions [14]float32
@@ -15,10 +20,17 @@ type VectorRecord struct {
 	_          [3]byte
 }
 
+type Cluster struct {
+	Centroid [14]float32
+	Start    uint32
+	Count    uint32
+}
+
 type DataEngine struct {
-	File    *os.File
-	Data    []byte
-	Records []VectorRecord
+	File     *os.File
+	Data     []byte
+	Clusters []Cluster
+	Records  []VectorRecord
 }
 
 func LoadEngine(path string) (*DataEngine, error) {
@@ -34,19 +46,9 @@ func LoadEngine(path string) (*DataEngine, error) {
 	}
 
 	size := info.Size()
-	if size == 0 {
+	if size < HeaderSize {
 		_ = file.Close()
-		return nil, fmt.Errorf("references file is empty")
-	}
-	if size%RecordSize != 0 {
-		_ = file.Close()
-		return nil, fmt.Errorf("invalid references size: %d is not a multiple of %d", size, RecordSize)
-	}
-
-	maxInt := int64(^uint(0) >> 1)
-	if size > maxInt {
-		_ = file.Close()
-		return nil, fmt.Errorf("references file too large to map: %d", size)
+		return nil, fmt.Errorf("file too small")
 	}
 
 	data, err := syscall.Mmap(int(file.Fd()), 0, int(size), syscall.PROT_READ, syscall.MAP_SHARED)
@@ -55,19 +57,49 @@ func LoadEngine(path string) (*DataEngine, error) {
 		return nil, fmt.Errorf("mmap references file: %w", err)
 	}
 
-	recordCount := int(size / RecordSize)
-	records := unsafe.Slice((*VectorRecord)(unsafe.Pointer(&data[0])), recordCount)
+	if !bytes.Equal(data[:4], []byte("IVF1")) {
+		_ = syscall.Munmap(data)
+		_ = file.Close()
+		return nil, fmt.Errorf("invalid magic bytes, expected IVF1")
+	}
+
+	numClusters := binary.LittleEndian.Uint32(data[4:8])
+	clustersOffset := HeaderSize
+	recordsOffset := HeaderSize + int(numClusters)*ClusterInfoSize
+
+	if size < int64(recordsOffset) {
+		_ = syscall.Munmap(data)
+		_ = file.Close()
+		return nil, fmt.Errorf("file size does not match cluster count")
+	}
+
+	clusters := make([]Cluster, numClusters)
+	for i := 0; i < int(numClusters); i++ {
+		offset := clustersOffset + i*ClusterInfoSize
+		for j := 0; j < 14; j++ {
+			bits := binary.LittleEndian.Uint32(data[offset+j*4 : offset+j*4+4])
+			clusters[i].Centroid[j] = math.Float32frombits(bits)
+		}
+		clusters[i].Start = binary.LittleEndian.Uint32(data[offset+56 : offset+60])
+		clusters[i].Count = binary.LittleEndian.Uint32(data[offset+60 : offset+64])
+	}
+
+	recordDataSize := size - int64(recordsOffset)
+	if recordDataSize%RecordSize != 0 {
+		_ = syscall.Munmap(data)
+		_ = file.Close()
+		return nil, fmt.Errorf("invalid records area size")
+	}
+
+	recordCount := int(recordDataSize / RecordSize)
+	records := unsafe.Slice((*VectorRecord)(unsafe.Pointer(&data[recordsOffset])), recordCount)
 
 	return &DataEngine{
-		File:    file,
-		Data:    data,
-		Records: records,
+		File:     file,
+		Data:     data,
+		Clusters: clusters,
+		Records:  records,
 	}, nil
-}
-
-// NewDataEngine is a convenience alias for LoadEngine.
-func NewDataEngine(path string) (*DataEngine, error) {
-	return LoadEngine(path)
 }
 
 func (e *DataEngine) Close() {

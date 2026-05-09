@@ -2,79 +2,67 @@ package engine
 
 import (
 	"math"
-	"runtime"
-	"sync"
 )
-
-const maxWorkers = 2
 
 type Neighbor struct {
 	DistSq  float32
 	IsFraud uint8
 }
 
-// SearchNeighbors performs a brute-force KNN (k=5) using a linear scan.
-func SearchNeighbors(target [14]float32, records []VectorRecord) float32 {
-	if len(records) == 0 {
+type ClusterDist struct {
+	ID     int
+	DistSq float32
+}
+
+const NPROBE = 16
+
+// SearchNeighbors uses IVF index to perform an approximate KNN (k=5) search.
+func SearchNeighbors(target [14]float32, dataEngine *DataEngine) float32 {
+	if len(dataEngine.Clusters) == 0 {
 		return 0
 	}
 
-	workers := runtime.GOMAXPROCS(0)
-	if workers < 1 {
-		workers = 1
-	}
-	if workers > maxWorkers {
-		workers = maxWorkers
-	}
-	if workers > len(records) {
-		workers = 1
+	// 1. Find top NPROBE clusters
+	var topClusters [NPROBE]ClusterDist
+	maxClusterDist := float32(math.MaxFloat32)
+	for i := 0; i < NPROBE; i++ {
+		topClusters[i].DistSq = maxClusterDist
 	}
 
-	if workers == 1 {
-		best := searchChunk(target, records)
-		return fraudScore(best)
-	}
-
-	chunkSize := len(records) / workers
-	if chunkSize == 0 {
-		best := searchChunk(target, records)
-		return fraudScore(best)
-	}
-
-	var wg sync.WaitGroup
-	var locals [maxWorkers][5]Neighbor
-
-	for i := 0; i < workers; i++ {
-		start := i * chunkSize
-		end := start + chunkSize
-		if i == workers-1 {
-			end = len(records)
-		}
-
-		wg.Add(1)
-		go func(workerID, startIdx, endIdx int) {
-			defer wg.Done()
-			heap := searchChunk(target, records[startIdx:endIdx])
-			locals[workerID] = heap
-		}(i, start, end)
-	}
-
-	wg.Wait()
-
-	best := initHeap()
-	for i := 0; i < workers; i++ {
-		for j := 0; j < 5; j++ {
-			insertNeighbor(&best, locals[i][j])
+	for i := range dataEngine.Clusters {
+		d := distSq(target, dataEngine.Clusters[i].Centroid)
+		if d < topClusters[NPROBE-1].DistSq {
+			topClusters[NPROBE-1] = ClusterDist{ID: i, DistSq: d}
+			// bubble up
+			for j := NPROBE - 1; j > 0; j-- {
+				if topClusters[j].DistSq < topClusters[j-1].DistSq {
+					topClusters[j], topClusters[j-1] = topClusters[j-1], topClusters[j]
+				} else {
+					break
+				}
+			}
 		}
 	}
 
-	return fraudScore(best)
+	// 2. Search inside the top NPROBE clusters
+	heap := initHeap()
+	for i := 0; i < NPROBE; i++ {
+		clusterID := topClusters[i].ID
+		cluster := dataEngine.Clusters[clusterID]
+		if cluster.Count == 0 {
+			continue
+		}
+		
+		start := int(cluster.Start)
+		end := start + int(cluster.Count)
+		searchChunkInline(target, dataEngine.Records[start:end], &heap)
+	}
+
+	return fraudScore(heap)
 }
 
-func searchChunk(target [14]float32, records []VectorRecord) [5]Neighbor {
-	heap := initHeap()
-
-	for i := range records {
+func searchChunkInline(target [14]float32, records []VectorRecord, heap *[5]Neighbor) {
+	for i := 0; i < len(records); i++ {
 		rec := &records[i]
 
 		d0 := rec.Dimensions[0] - target[0]
@@ -99,11 +87,9 @@ func searchChunk(target [14]float32, records []VectorRecord) [5]Neighbor {
 
 		if distSq < heap[4].DistSq {
 			heap[4] = Neighbor{DistSq: distSq, IsFraud: rec.IsFraud}
-			bubbleUp(&heap)
+			bubbleUp(heap)
 		}
 	}
-
-	return heap
 }
 
 func initHeap() [5]Neighbor {
@@ -113,14 +99,6 @@ func initHeap() [5]Neighbor {
 		heap[i].DistSq = maxDist
 	}
 	return heap
-}
-
-func insertNeighbor(heap *[5]Neighbor, n Neighbor) {
-	if n.DistSq >= heap[4].DistSq {
-		return
-	}
-	heap[4] = n
-	bubbleUp(heap)
 }
 
 func bubbleUp(heap *[5]Neighbor) {
@@ -141,4 +119,22 @@ func fraudScore(heap [5]Neighbor) float32 {
 		}
 	}
 	return fraudCount / 5.0
+}
+
+func distSq(a, b [14]float32) float32 {
+	d0 := a[0] - b[0]
+	d1 := a[1] - b[1]
+	d2 := a[2] - b[2]
+	d3 := a[3] - b[3]
+	d4 := a[4] - b[4]
+	d5 := a[5] - b[5]
+	d6 := a[6] - b[6]
+	d7 := a[7] - b[7]
+	d8 := a[8] - b[8]
+	d9 := a[9] - b[9]
+	d10 := a[10] - b[10]
+	d11 := a[11] - b[11]
+	d12 := a[12] - b[12]
+	d13 := a[13] - b[13]
+	return d0*d0 + d1*d1 + d2*d2 + d3*d3 + d4*d4 + d5*d5 + d6*d6 + d7*d7 + d8*d8 + d9*d9 + d10*d10 + d11*d11 + d12*d12 + d13*d13
 }

@@ -67,7 +67,7 @@ func handleFraudScore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	score := engine.SearchNeighbors(vector, dataEngine.Records)
+	score := engine.SearchNeighbors(vector, dataEngine)
 	approved := score < 0.6
 
 	response := struct {
