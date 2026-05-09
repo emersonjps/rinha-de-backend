@@ -16,7 +16,7 @@ type ClusterDist struct {
 	DistSq float32
 }
 
-const NPROBE = 16
+const NPROBE = 8
 
 var distPool = sync.Pool{
 	New: func() any {
@@ -27,19 +27,23 @@ var distPool = sync.Pool{
 
 // SearchNeighbors uses IVF index to perform an approximate KNN (k=5) search.
 func SearchNeighbors(target [14]float32, dataEngine *DataEngine) float32 {
-	if len(dataEngine.Clusters) == 0 {
+	numClusters := len(dataEngine.Clusters)
+	if numClusters == 0 {
 		return 0
 	}
 
-	// 1. Find top NPROBE clusters
+	// 1. Find top NPROBE clusters using AVX2!
+	var dists [2048]float32 // Stack allocated, more than enough for 1024 clusters
+	batchDistAVX2_64(&target, unsafe.Pointer(&dataEngine.Clusters[0]), numClusters, &dists[0])
+
 	var topClusters [NPROBE]ClusterDist
 	maxClusterDist := float32(math.MaxFloat32)
 	for i := 0; i < NPROBE; i++ {
 		topClusters[i].DistSq = maxClusterDist
 	}
 
-	for i := range dataEngine.Clusters {
-		d := distSq(target, dataEngine.Clusters[i].Centroid)
+	for i := 0; i < numClusters; i++ {
+		d := dists[i]
 		if d < topClusters[NPROBE-1].DistSq {
 			topClusters[NPROBE-1] = ClusterDist{ID: i, DistSq: d}
 			// bubble up

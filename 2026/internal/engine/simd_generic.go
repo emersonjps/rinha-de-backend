@@ -36,3 +36,34 @@ func batchDistAVX2(target *[14]float32, records unsafe.Pointer, numRecords int, 
 		dists[i] = distSq
 	}
 }
+
+func batchDistAVX2_64(target *[14]float32, records unsafe.Pointer, numRecords int, distances *float32) {
+	recs := unsafe.Slice((*Cluster)(records), numRecords)
+	dists := unsafe.Slice(distances, numRecords)
+	
+	for i := 0; i < numRecords; i++ {
+		rec := &recs[i]
+
+		d0 := rec.Centroid[0] - target[0]
+		d1 := rec.Centroid[1] - target[1]
+		d2 := rec.Centroid[2] - target[2]
+		d3 := rec.Centroid[3] - target[3]
+		d4 := rec.Centroid[4] - target[4]
+		d5 := rec.Centroid[5] - target[5]
+		d6 := rec.Centroid[6] - target[6]
+		d7 := rec.Centroid[7] - target[7]
+		d8 := rec.Centroid[8] - target[8]
+		d9 := rec.Centroid[9] - target[9]
+		d10 := rec.Centroid[10] - target[10]
+		d11 := rec.Centroid[11] - target[11]
+		d12 := rec.Centroid[12] - target[12]
+		d13 := rec.Centroid[13] - target[13]
+
+		distSq := d0*d0 + d1*d1 + d2*d2 + d3*d3 +
+			d4*d4 + d5*d5 + d6*d6 + d7*d7 +
+			d8*d8 + d9*d9 + d10*d10 + d11*d11 +
+			d12*d12 + d13*d13
+			
+		dists[i] = distSq
+	}
+}

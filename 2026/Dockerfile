@@ -18,4 +18,6 @@ WORKDIR /app
 COPY --from=builder-api /app/rinha-api ./rinha-api
 COPY --from=builder-dataset /app/references.bin /data/references.bin
 EXPOSE 8080
+ENV GOMEMLIMIT=150MiB
+ENV GOGC=1000
 ENTRYPOINT ["./rinha-api"]

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"unsafe"
 
 	"github.com/buger/jsonparser"
 )
@@ -32,40 +33,59 @@ func clamp(x float32) float32 {
 	return x
 }
 
+func unsafeString(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return unsafe.String(&b[0], len(b))
+}
+
 // Vectorize converts a JSON payload into a 14-dimension feature vector.
-func Vectorize(body []byte, mccRisks map[string]float32) ([14]float32, error) {
+func Vectorize(body []byte, mccRisks *[10000]float32) ([14]float32, error) {
 	var v [14]float32
 
-	transaction, err := getObject(body, "transaction")
-	if err != nil {
-		return v, err
-	}
-	customer, err := getObject(body, "customer")
-	if err != nil {
-		return v, err
-	}
-	merchant, err := getObject(body, "merchant")
-	if err != nil {
-		return v, err
-	}
-	terminal, err := getObject(body, "terminal")
-	if err != nil {
-		return v, err
+	var transactionBytes, customerBytes, merchantBytes, terminalBytes, lastTxBytes []byte
+	var lastTxType jsonparser.ValueType
+
+	jsonparser.ObjectEach(body, func(key []byte, value []byte, dataType jsonparser.ValueType, offset int) error {
+		if len(key) == 0 {
+			return nil
+		}
+		switch key[0] {
+		case 'c':
+			customerBytes = value
+		case 'm':
+			merchantBytes = value
+		case 'l':
+			lastTxBytes = value
+			lastTxType = dataType
+		case 't':
+			if len(key) > 1 && key[1] == 'e' {
+				terminalBytes = value
+			} else {
+				transactionBytes = value
+			}
+		}
+		return nil
+	})
+
+	if transactionBytes == nil || customerBytes == nil || merchantBytes == nil || terminalBytes == nil {
+		return v, ErrInvalidPayload
 	}
 
-	amount, err := jsonparser.GetFloat(transaction, "amount")
+	amount, err := jsonparser.GetFloat(transactionBytes, "amount")
 	if err != nil {
 		return v, ErrInvalidPayload
 	}
 	v[0] = clamp(float32(amount) / MaxAmount)
 
-	installments, err := jsonparser.GetInt(transaction, "installments")
+	installments, err := jsonparser.GetInt(transactionBytes, "installments")
 	if err != nil {
 		return v, ErrInvalidPayload
 	}
 	v[1] = clamp(float32(installments) / MaxInstallments)
 
-	avgAmount, err := jsonparser.GetFloat(customer, "avg_amount")
+	avgAmount, err := jsonparser.GetFloat(customerBytes, "avg_amount")
 	if err != nil {
 		return v, ErrInvalidPayload
 	}
@@ -75,7 +95,7 @@ func Vectorize(body []byte, mccRisks map[string]float32) ([14]float32, error) {
 		v[2] = 0
 	}
 
-	requestedAt, err := jsonparser.GetUnsafeString(transaction, "requested_at")
+	requestedAt, err := jsonparser.GetUnsafeString(transactionBytes, "requested_at")
 	if err != nil {
 		return v, ErrInvalidPayload
 	}
@@ -83,21 +103,24 @@ func Vectorize(body []byte, mccRisks map[string]float32) ([14]float32, error) {
 	if !ok {
 		return v, ErrInvalidTimestamp
 	}
+	
+	days := daysSinceCivil(year, month, day)
+	
 	v[3] = float32(hour) / 23.0
-	weekday := weekdayFromDate(year, month, day)
+	
+	weekday := int((days + 3) % 7)
+	if weekday < 0 {
+		weekday += 7
+	}
 	v[4] = float32(weekday) / 6.0
 
-	reqSeconds := unixSeconds(year, month, day, hour, minute, second)
+	reqSeconds := ((days*24+int64(hour))*60+int64(minute))*60 + int64(second)
 
-	lastTx, lastTxType, _, err := jsonparser.Get(body, "last_transaction")
-	if err != nil {
-		return v, ErrInvalidPayload
-	}
-	if lastTxType == jsonparser.Null {
+	if lastTxType == jsonparser.Null || lastTxBytes == nil {
 		v[5] = -1
 		v[6] = -1
 	} else if lastTxType == jsonparser.Object {
-		lastTimestamp, err := jsonparser.GetUnsafeString(lastTx, "timestamp")
+		lastTimestamp, err := jsonparser.GetUnsafeString(lastTxBytes, "timestamp")
 		if err != nil {
 			return v, ErrInvalidPayload
 		}
@@ -105,7 +128,8 @@ func Vectorize(body []byte, mccRisks map[string]float32) ([14]float32, error) {
 		if !ok {
 			return v, ErrInvalidTimestamp
 		}
-		lastSeconds := unixSeconds(lyear, lmonth, lday, lhour, lminute, lsecond)
+		ldays := daysSinceCivil(lyear, lmonth, lday)
+		lastSeconds := ((ldays*24+int64(lhour))*60+int64(lminute))*60 + int64(lsecond)
 		deltaSeconds := reqSeconds - lastSeconds
 		if deltaSeconds < 0 {
 			deltaSeconds = 0
@@ -113,7 +137,7 @@ func Vectorize(body []byte, mccRisks map[string]float32) ([14]float32, error) {
 		minutes := float32(deltaSeconds) / 60.0
 		v[5] = clamp(minutes / MaxMinutes)
 
-		kmFromLast, err := jsonparser.GetFloat(lastTx, "km_from_current")
+		kmFromLast, err := jsonparser.GetFloat(lastTxBytes, "km_from_current")
 		if err != nil {
 			return v, ErrInvalidPayload
 		}
@@ -122,19 +146,19 @@ func Vectorize(body []byte, mccRisks map[string]float32) ([14]float32, error) {
 		return v, ErrInvalidPayload
 	}
 
-	kmFromHome, err := jsonparser.GetFloat(terminal, "km_from_home")
+	kmFromHome, err := jsonparser.GetFloat(terminalBytes, "km_from_home")
 	if err != nil {
 		return v, ErrInvalidPayload
 	}
 	v[7] = clamp(float32(kmFromHome) / MaxKm)
 
-	txCount24h, err := jsonparser.GetInt(customer, "tx_count_24h")
+	txCount24h, err := jsonparser.GetInt(customerBytes, "tx_count_24h")
 	if err != nil {
 		return v, ErrInvalidPayload
 	}
 	v[8] = clamp(float32(txCount24h) / MaxTxCount24h)
 
-	isOnline, err := jsonparser.GetBoolean(terminal, "is_online")
+	isOnline, err := jsonparser.GetBoolean(terminalBytes, "is_online")
 	if err != nil {
 		return v, ErrInvalidPayload
 	}
@@ -144,7 +168,7 @@ func Vectorize(body []byte, mccRisks map[string]float32) ([14]float32, error) {
 		v[9] = 0
 	}
 
-	cardPresent, err := jsonparser.GetBoolean(terminal, "card_present")
+	cardPresent, err := jsonparser.GetBoolean(terminalBytes, "card_present")
 	if err != nil {
 		return v, ErrInvalidPayload
 	}
@@ -154,13 +178,13 @@ func Vectorize(body []byte, mccRisks map[string]float32) ([14]float32, error) {
 		v[10] = 0
 	}
 
-	merchantID, err := jsonparser.GetUnsafeString(merchant, "id")
+	merchantID, err := jsonparser.GetUnsafeString(merchantBytes, "id")
 	if err != nil {
 		return v, ErrInvalidPayload
 	}
 
 	unknownMerchant := float32(1)
-	knownMerchants, kmType, _, err := jsonparser.Get(customer, "known_merchants")
+	knownMerchants, kmType, _, err := jsonparser.Get(customerBytes, "known_merchants")
 	if err == nil && kmType == jsonparser.Array {
 		_, _ = jsonparser.ArrayEach(knownMerchants, func(value []byte, dataType jsonparser.ValueType, offset int, err error) {
 			if unknownMerchant == 0 || dataType != jsonparser.String {
@@ -173,17 +197,19 @@ func Vectorize(body []byte, mccRisks map[string]float32) ([14]float32, error) {
 	}
 	v[11] = unknownMerchant
 
-	mcc, err := jsonparser.GetUnsafeString(merchant, "mcc")
+	mcc, err := jsonparser.GetUnsafeString(merchantBytes, "mcc")
 	if err != nil {
 		return v, ErrInvalidPayload
 	}
-	if risk, ok := mccRisks[mcc]; ok {
-		v[12] = risk
+	
+	mccInt, ok := parse4(mcc, 0)
+	if ok && mccInt < 10000 {
+		v[12] = mccRisks[mccInt]
 	} else {
 		v[12] = 0.5
 	}
 
-	merchantAvg, err := jsonparser.GetFloat(merchant, "avg_amount")
+	merchantAvg, err := jsonparser.GetFloat(merchantBytes, "avg_amount")
 	if err != nil {
 		return v, ErrInvalidPayload
 	}
@@ -192,13 +218,6 @@ func Vectorize(body []byte, mccRisks map[string]float32) ([14]float32, error) {
 	return v, nil
 }
 
-func getObject(body []byte, key string) ([]byte, error) {
-	value, dataType, _, err := jsonparser.Get(body, key)
-	if err != nil || dataType != jsonparser.Object {
-		return nil, ErrInvalidPayload
-	}
-	return value, nil
-}
 
 func parseISO8601(s string) (year, month, day, hour, minute, second int, ok bool) {
 	if len(s) < 20 {
@@ -263,19 +282,6 @@ func parse4(s string, i int) (int, bool) {
 	return int(a-'0')*1000 + int(b-'0')*100 + int(c-'0')*10 + int(d-'0'), true
 }
 
-func unixSeconds(year, month, day, hour, minute, second int) int64 {
-	days := daysSinceCivil(year, month, day)
-	return ((days*24+int64(hour))*60+int64(minute))*60 + int64(second)
-}
-
-func weekdayFromDate(year, month, day int) int {
-	days := daysSinceCivil(year, month, day)
-	weekday := int((days + 3) % 7)
-	if weekday < 0 {
-		weekday += 7
-	}
-	return weekday
-}
 
 func daysSinceCivil(year, month, day int) int64 {
 	if month <= 2 {
