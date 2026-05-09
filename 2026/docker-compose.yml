@@ -1,0 +1,42 @@
+version: "3.8"
+
+services:
+  haproxy:
+    image: haproxy:2.9-alpine
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - api1
+      - api2
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: "10MB"
+    networks:
+      - rinha-net
+
+  api1: &api_config
+    build:
+      context: .
+      dockerfile: Dockerfile
+    expose:
+      - "8080"
+    volumes:
+      - ./references.bin:/data/references.bin:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "170MB"
+    networks:
+      - rinha-net
+
+  api2:
+    <<: *api_config
+
+networks:
+  rinha-net:
+    driver: bridge
