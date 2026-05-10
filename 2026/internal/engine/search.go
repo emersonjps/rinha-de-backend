@@ -16,11 +16,11 @@ type ClusterDist struct {
 	DistSq float32
 }
 
-const NPROBE = 8
+const NPROBE = 5
 
 var distPool = sync.Pool{
 	New: func() any {
-		s := make([]float32, 50000)
+		s := make([]float32, 100000) // Increased size for safety
 		return &s
 	},
 }
@@ -33,7 +33,7 @@ func SearchNeighbors(target [14]float32, dataEngine *DataEngine) float32 {
 	}
 
 	// 1. Find top NPROBE clusters using AVX2!
-	var dists [2048]float32 // Stack allocated, more than enough for 1024 clusters
+	var dists [2048]float32 
 	batchDistAVX2_64(&target, unsafe.Pointer(&dataEngine.Clusters[0]), numClusters, &dists[0])
 
 	var topClusters [NPROBE]ClusterDist
@@ -46,7 +46,6 @@ func SearchNeighbors(target [14]float32, dataEngine *DataEngine) float32 {
 		d := dists[i]
 		if d < topClusters[NPROBE-1].DistSq {
 			topClusters[NPROBE-1] = ClusterDist{ID: i, DistSq: d}
-			// bubble up
 			for j := NPROBE - 1; j > 0; j-- {
 				if topClusters[j].DistSq < topClusters[j-1].DistSq {
 					topClusters[j], topClusters[j-1] = topClusters[j-1], topClusters[j]
@@ -59,6 +58,10 @@ func SearchNeighbors(target [14]float32, dataEngine *DataEngine) float32 {
 
 	// 2. Search inside the top NPROBE clusters
 	heap := initHeap()
+	
+	sptr := distPool.Get().(*[]float32)
+	poolDists := *sptr
+
 	for i := 0; i < NPROBE; i++ {
 		clusterID := topClusters[i].ID
 		cluster := dataEngine.Clusters[clusterID]
@@ -67,37 +70,34 @@ func SearchNeighbors(target [14]float32, dataEngine *DataEngine) float32 {
 		}
 		
 		start := int(cluster.Start)
-		end := start + int(cluster.Count)
-		searchChunkInline(target, dataEngine.Records[start:end], &heap)
-	}
+		count := int(cluster.Count)
+		records := dataEngine.Records[start : start+count]
 
-	return fraudScore(heap)
-}
+		if len(poolDists) < count {
+			poolDists = make([]float32, count*2)
+			*sptr = poolDists
+		}
 
-func searchChunkInline(target [14]float32, records []VectorRecord, heap *[5]Neighbor) {
-	if len(records) == 0 {
-		return
-	}
+		batchDistAVX2(&target, unsafe.Pointer(&records[0]), count, &poolDists[0])
 
-	sptr := distPool.Get().(*[]float32)
-	dists := *sptr
-	if len(dists) < len(records) {
-		dists = make([]float32, len(records)*2)
-		*sptr = dists
-	}
-
-	// Calculate all distances in batch using AVX2 Assembly!
-	batchDistAVX2(&target, unsafe.Pointer(&records[0]), len(records), &dists[0])
-
-	for i := 0; i < len(records); i++ {
-		d := dists[i]
-		if d < heap[4].DistSq {
-			heap[4] = Neighbor{DistSq: d, IsFraud: records[i].IsFraud}
-			bubbleUp(heap)
+		for j := 0; j < count; j++ {
+			d := poolDists[j]
+			if d < heap[4].DistSq {
+				heap[4] = Neighbor{DistSq: d, IsFraud: records[j].IsFraud}
+				// inline bubbleUp
+				for k := 4; k > 0; k-- {
+					if heap[k].DistSq < heap[k-1].DistSq {
+						heap[k], heap[k-1] = heap[k-1], heap[k]
+					} else {
+						break
+					}
+				}
+			}
 		}
 	}
 
 	distPool.Put(sptr)
+	return fraudScore(heap)
 }
 
 func initHeap() [5]Neighbor {
