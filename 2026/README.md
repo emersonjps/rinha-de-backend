@@ -53,7 +53,23 @@ curl -s -X POST http://localhost:9999/fraud-score \
 {"approved":true,"fraud_score":0}
 ```
 
-## 3. Teste de Stress (Benchmark)
+## 3. Teste com k6 (Smoke e Oficial)
+
+Para rodar o teste oficial da rinha e o smoke local, o repositório traz os scripts em `test/`.
+
+```bash
+# Smoke rápido (5 requisições)
+k6 run test/smoke.js
+```
+
+```bash
+# Teste oficial (gera o relatório em test/results.json)
+k6 run test/test.js
+```
+
+> Dica: rode os comandos a partir da raiz do projeto para que o relatório seja salvo em `test/results.json`.
+
+## 4. Teste de Stress (Benchmark)
 
 A Rinha avalia fortemente a latência da sua API. Para rodar um benchmark rápido focando em testes de estresse para a rota `/fraud-score`, adicionamos um script em Go que lê múltiplos payloads e os dispara simultaneamente contra o load balancer.
 
@@ -84,7 +100,7 @@ A pontuação final da Rinha vai de **-6000 a +6000 pontos** e é a soma indepen
 
 **Como melhorar sua pontuação:** O `SearchNeighbors` atual faz *brute-force* nos 3 milhões de vetores, resultando em alto consumo de CPU e P99 elevado. Para garantir os +3000 de latência sem perder a acurácia, você deverá substituir a força bruta por algoritmos de Busca Aproximada (ANN), como **HNSW**, **IVF**, ou buscas exatas como **VP Tree**. Além disso, prefira retornar uma resposta "chutada" rápida ao invés de devolver erro 500 caso ocorra falha interna!
 
-## 4. Encerrando o ambiente
+## 5. Encerrando o ambiente
 
 Para desligar o servidor e limpar a rede:
 
