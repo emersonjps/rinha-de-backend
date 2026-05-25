@@ -30,8 +30,8 @@ type Normalization struct {
 
 // ReferenceRecord is the expected shape of each JSON entry in references.json.gz.
 type ReferenceRecord struct {
-	IsFraud bool        `json:"is_fraud"`
-	Vector  [14]float32 `json:"vector"`
+	Label  string      `json:"label"`
+	Vector [14]float32 `json:"vector"`
 }
 
 type VectorRecord struct {
@@ -39,7 +39,7 @@ type VectorRecord struct {
 	IsFraud uint8
 }
 
-const numClusters = 1024
+const numClusters = 2048
 
 func readJSONFile(path string, v any) error {
 	data, err := os.ReadFile(path)
@@ -85,7 +85,7 @@ func run() error {
 			return fmt.Errorf("decode record %d: %w", count, err)
 		}
 		vr := VectorRecord{Vector: rec.Vector}
-		if rec.IsFraud {
+		if rec.Label == "fraud" {
 			vr.IsFraud = 1
 		}
 		records = append(records, vr)
@@ -98,7 +98,7 @@ func run() error {
 	log.Printf("Loaded %d records in %v. Starting KMeans with %d clusters...", len(records), time.Since(start), numClusters)
 
 	// Training subset
-	subsetSize := 100000
+	subsetSize := 300000
 	if len(records) < subsetSize {
 		subsetSize = len(records)
 	}
@@ -112,7 +112,7 @@ func run() error {
 	}
 
 	// Train KMeans
-	for iter := 0; iter < 15; iter++ {
+	for iter := 0; iter < 20; iter++ {
 		var sums [numClusters][14]float32
 		var counts [numClusters]int
 

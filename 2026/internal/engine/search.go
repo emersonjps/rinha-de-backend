@@ -16,7 +16,7 @@ type ClusterDist struct {
 	DistSq float32
 }
 
-const NPROBE = 5
+const NPROBE = 32
 
 var distPool = sync.Pool{
 	New: func() any {
@@ -33,7 +33,7 @@ func SearchNeighbors(target [14]float32, dataEngine *DataEngine) float32 {
 	}
 
 	// 1. Find top NPROBE clusters using AVX2!
-	var dists [2048]float32 
+	var dists [4096]float32
 	batchDistAVX2_64(&target, unsafe.Pointer(&dataEngine.Clusters[0]), numClusters, &dists[0])
 
 	var topClusters [NPROBE]ClusterDist
@@ -58,7 +58,7 @@ func SearchNeighbors(target [14]float32, dataEngine *DataEngine) float32 {
 
 	// 2. Search inside the top NPROBE clusters
 	heap := initHeap()
-	
+
 	sptr := distPool.Get().(*[]float32)
 	poolDists := *sptr
 

@@ -11,6 +11,7 @@ TEXT ·batchDistAVX2(SB), NOSPLIT, $0-32
     // Load target vector into AVX registers
     VMOVUPS 0(AX), Y0         // Y0 = target[0:8]
     VMOVUPS 32(AX), X1        // X1 = target[8:12]
+    VXORPS  X2, X2, X2
     VMOVSD  48(AX), X2        // X2 = target[12:14] (lower 64 bits)
 
 l4:
@@ -26,6 +27,7 @@ l4:
     VSUBPS X1, X4, X4
     VMULPS X4, X4, X4
 
+    VXORPS X5, X5, X5
     VMOVSD 48(BX), X5
     VSUBPS X2, X5, X5
     VMULPS X5, X5, X5
@@ -47,6 +49,7 @@ l4:
     VSUBPS X1, X4, X4
     VMULPS X4, X4, X4
 
+    VXORPS X5, X5, X5
     VMOVSD 108(BX), X5
     VSUBPS X2, X5, X5
     VMULPS X5, X5, X5
@@ -68,6 +71,7 @@ l4:
     VSUBPS X1, X4, X4
     VMULPS X4, X4, X4
 
+    VXORPS X5, X5, X5
     VMOVSD 168(BX), X5
     VSUBPS X2, X5, X5
     VMULPS X5, X5, X5
@@ -89,6 +93,7 @@ l4:
     VSUBPS X1, X4, X4
     VMULPS X4, X4, X4
 
+    VXORPS X5, X5, X5
     VMOVSD 228(BX), X5
     VSUBPS X2, X5, X5
     VMULPS X5, X5, X5
@@ -118,6 +123,7 @@ l1:
     VSUBPS X1, X4, X4
     VMULPS X4, X4, X4
 
+    VXORPS X5, X5, X5
     VMOVSD 48(BX), X5
     VSUBPS X2, X5, X5
     VMULPS X5, X5, X5
@@ -149,6 +155,7 @@ TEXT ·batchDistAVX2_64(SB), NOSPLIT, $0-32
     // Load target vector into AVX registers
     VMOVUPS 0(AX), Y0         // Y0 = target[0:8]
     VMOVUPS 32(AX), X1        // X1 = target[8:12]
+    VXORPS  X2, X2, X2
     VMOVSD  48(AX), X2        // X2 = target[12:14] (lower 64 bits)
 
 l4_64:
@@ -164,6 +171,7 @@ l4_64:
     VSUBPS X1, X4, X4
     VMULPS X4, X4, X4
 
+    VXORPS X5, X5, X5
     VMOVSD 48(BX), X5
     VSUBPS X2, X5, X5
     VMULPS X5, X5, X5
@@ -185,6 +193,7 @@ l4_64:
     VSUBPS X1, X4, X4
     VMULPS X4, X4, X4
 
+    VXORPS X5, X5, X5
     VMOVSD 112(BX), X5
     VSUBPS X2, X5, X5
     VMULPS X5, X5, X5
@@ -206,6 +215,7 @@ l4_64:
     VSUBPS X1, X4, X4
     VMULPS X4, X4, X4
 
+    VXORPS X5, X5, X5
     VMOVSD 176(BX), X5
     VSUBPS X2, X5, X5
     VMULPS X5, X5, X5
@@ -227,6 +237,7 @@ l4_64:
     VSUBPS X1, X4, X4
     VMULPS X4, X4, X4
 
+    VXORPS X5, X5, X5
     VMOVSD 240(BX), X5
     VSUBPS X2, X5, X5
     VMULPS X5, X5, X5
@@ -256,6 +267,7 @@ l1_64:
     VSUBPS X1, X4, X4
     VMULPS X4, X4, X4
 
+    VXORPS X5, X5, X5
     VMOVSD 48(BX), X5
     VSUBPS X2, X5, X5
     VMULPS X5, X5, X5
